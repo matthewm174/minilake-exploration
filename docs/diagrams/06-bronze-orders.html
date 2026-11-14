@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1085">
+<title>06 · Deep dive: sql/bronze/orders.sql</title>
+<link rel="stylesheet" href="diagram.css">
+<script src="diagram.js"></script>
+<style>
+    .stage { height: 880px; }
+    pre { margin: 6px 0 0; font: 12px/1.5 "Cascadia Code", Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; white-space: pre; }
+    pre .k { color: #93c5fd; } pre .s { color: #fde68a; } pre .c { color: #94a3b8; } pre .f { color: #c4b5fd; } pre .p { color: #fca5a5; }
+    .m { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 50%; background: #f59e0b; color: #0f172a;
+         font: 700 11px "Segoe UI", sans-serif; text-align: center; margin-left: 6px; }
+    .callouts { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; }
+    .callouts li { display: grid; grid-template-columns: 26px 1fr; margin-bottom: 7px; }
+    .callouts .m { margin: 1px 0 0; }
+    table.kv { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
+    table.kv td { border-top: 1px solid #e2e8f0; padding: 4px 6px; vertical-align: top; }
+    table.kv td:first-child { font: 700 12px "Cascadia Code", Consolas, monospace; white-space: nowrap; color: var(--bronze); }
+    table.kv td:last-child { font: 11.5px "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
+    table.kv .t { color: var(--muted); font: 10.5px "Segoe UI", sans-serif; display: block; }
+    table.rows { border-collapse: collapse; width: 100%; font: 11.5px "Cascadia Code", Consolas, monospace; margin-top: 6px; }
+    table.rows th { text-align: left; font: 700 11px "Segoe UI", sans-serif; color: var(--muted); border-bottom: 1px solid #cbd5e1; padding: 3px 5px; }
+    table.rows td { padding: 3px 5px; border-bottom: 1px solid #f1f5f9; }
+</style>
+</head>
+<body>
+<h1>Deep dive — <code style="font-size:26px">sql/bronze/orders.sql</code></h1>
+<p class="sub">Follows one real record, <code>O20261113-0001</code>, from the landed JSON file, through the bronze SQL, into <code>lakehouse.bronze.orders</code>, and on to the two silver tables built from it.
+Bronze's job is to <b>never reject anything</b>: keep every record, keep the nested structure, and stamp where and when it arrived.</p>
+
+<div class="stage">
+    <div class="card b-landing" id="json" style="left:0; top:0; width:400px">
+        <span class="tag t-landing">landed file</span><h3 class="mono" style="font-size:13.5px">raw/orders/orders_2026-11-13.jsonl</h3>
+        One JSON object per line · 301 lines per day
+<pre>{ <span class="k">"order_id"</span>: <span class="s">"O20261113-0001"</span>,
+  <span class="k">"customer_id"</span>: <span class="s">"C0022"</span>,
+  <span class="k">"order_ts"</span>: <span class="s">"2026-10-18T06:51:00Z"</span>,
+  <span class="k">"status"</span>: <span class="s">"completed"</span>,
+  <span class="k">"channel"</span>: <span class="s">"web"</span>,
+  <span class="k">"items"</span>: [
+    { <span class="k">"sku"</span>: <span class="s">"SKU-300"</span>, <span class="k">"qty"</span>: <span class="p">3</span>,
+      <span class="k">"unit_price"</span>: <span class="p">79.0</span> },
+    { <span class="k">"sku"</span>: <span class="s">"SKU-201"</span>, <span class="k">"qty"</span>: <span class="p">3</span>,
+      <span class="k">"unit_price"</span>: <span class="p">45.0</span> } ] }</pre>
+    </div>
+
+    <div class="card b-py" id="sql" style="left:450px; top:0; width:612px">
+        <span class="tag t-bronze">bronze SQL</span> <span class="tag t-py">run by step_layer('bronze') in DuckDB</span>
+<pre><span class="c">-- Raw order events (JSON lines, nested items kept as-is), duplicates and</span><span class="m">1</span>
+<span class="c">-- bad records included.</span>
+<span class="k">SELECT</span>
+    order_id, customer_id, order_ts, status, channel,
+    items,                                                    <span class="m">2</span>
+    <span class="s">'${LANDING_URI}/orders/'</span> || <span class="f">parse_filename</span>(filename)
+        <span class="k">AS</span> _source_file,                                    <span class="m">3</span>
+    <span class="f">now</span>() <span class="k">AS</span> _ingested_at                                    <span class="m">4</span>
+<span class="k">FROM</span> <span class="f">read_json</span>(
+    <span class="s">'${LANDING}/orders/*.jsonl'</span>,                            <span class="m">5</span>
+    format = <span class="s">'newline_delimited'</span>,
+    filename = <span class="k">true</span>,                                         <span class="m">3</span>
+    columns = {                                               <span class="m">6</span>
+        order_id: <span class="s">'VARCHAR'</span>,    customer_id: <span class="s">'VARCHAR'</span>,
+        order_ts: <span class="s">'VARCHAR'</span>,    status: <span class="s">'VARCHAR'</span>,
+        channel:  <span class="s">'VARCHAR'</span>,
+        items: <span class="s">'STRUCT(sku VARCHAR, qty VARCHAR, unit_price VARCHAR)[]'</span>
+    }
+)</pre>
+        <div style="font-size:12px; color: var(--muted); margin-top:6px">Lines shown re-wrapped; content identical to the file. Comment and placeholders are processed by lake.py before DuckDB runs it.</div>
+    </div>
+
+    <div class="card b-bronze" id="brow" style="left:1112px; top:0; width:400px">
+        <span class="tag t-bronze">Delta row</span><h3 class="mono" style="font-size:14px">lakehouse.bronze.orders</h3>
+        <table class="kv">
+            <tr><td>order_id</td><td>O20261113-0001</td></tr>
+            <tr><td>customer_id</td><td>C0022</td></tr>
+            <tr><td>order_ts</td><td>2026-10-18T06:51:00Z<span class="t">still a string</span></td></tr>
+            <tr><td>status</td><td>completed</td></tr>
+            <tr><td>channel</td><td>web</td></tr>
+            <tr><td>items</td><td>[{sku: SKU-300, qty: '3', unit_price: '79.0'}, {sku: SKU-201, qty: '3', unit_price: '45.0'}]<span class="t">STRUCT(sku, qty, unit_price)[] — numbers became strings</span></td></tr>
+            <tr><td>_source_file</td><td>s3://acme-landing/raw/orders/orders_2026-11-13.jsonl</td></tr>
+            <tr><td>_ingested_at</td><td>2026-11-14 04:10:47+00<span class="t">TIMESTAMPTZ, same for the whole run</span></td></tr>
+        </table>
+    </div>
+
+    <div class="card" id="notes" style="left:0; top:345px; width:400px">
+        <h3>What each marker does</h3>
+        <ul class="callouts">
+            <li><span class="m">1</span><span>First comment line → the UC table <b>comment</b> (<code>_comment()</code>).</span></li>
+            <li><span class="m">2</span><span>Nested <code>items</code> array kept intact; exploding it is silver's job.</span></li>
+            <li><span class="m">3</span><span><code>filename = true</code> exposes the file path; it is rewritten to its <code>s3://</code> form as <code>_source_file</code>. Silver uses it as the "newest delivery wins" tie-breaker.</span></li>
+            <li><span class="m">4</span><span><code>_ingested_at</code> records when this bronze build ran.</span></li>
+            <li><span class="m">5</span><span><code>_render()</code> swaps <code>${LANDING}</code> for the local landing folder and <code>${LANDING_URI}</code> for <code>s3://acme-landing/raw</code>. The glob picks up <b>every</b> landed day.</span></li>
+            <li><span class="m">6</span><span>An explicit all-VARCHAR schema: no type inference, so a bad value can never fail ingestion. Typing happens in silver.</span></li>
+        </ul>
+    </div>
+
+    <div class="card b-py" id="write" style="left:450px; top:525px; width:612px">
+        <h3>Then lake.py…</h3>
+        <code>write_deltalake(s3/acme-lakehouse/bronze/orders, mode="overwrite", schema_mode="overwrite")</code> → new Delta version,
+        then <code>_register()</code> in UC and <code>_mount()</code> as a view so later files in the run can read it.
+    </div>
+
+    <div class="card b-silver" id="sord" style="left:450px; top:720px; width:612px; height:130px">
+        <span class="tag t-silver">silver/orders.sql</span> <span style="font-size:12.5px">dedupe on <code>order_id</code> (newest <code>_source_file</code>), drop <code>customer_id IS NULL</code>, cast, <code>lower(trim(status))</code></span>
+        <table class="rows"><tr><th>order_id</th><th>customer_id</th><th>order_ts</th><th>order_date</th><th>status</th><th>channel</th></tr>
+            <tr><td>O20261113-0001</td><td>C0022</td><td>2026-10-18 06:51:00+00</td><td>2026-10-18</td><td>completed</td><td>web</td></tr></table>
+    </div>
+
+    <div class="card b-silver" id="sitem" style="left:1112px; top:560px; width:400px; height:200px">
+        <span class="tag t-silver">silver/order_items.sql</span><div style="font-size:12.5px">same filters, then <code>unnest(items)</code> with <code>range(1, len+1)</code> as <code>line_number</code>; lines with <code>qty ≤ 0</code> dropped; <code>line_amount = qty × unit_price</code></div>
+        <table class="rows"><tr><th>line</th><th>sku</th><th>qty</th><th>unit_price</th><th>line_amount</th></tr>
+            <tr><td>1</td><td>SKU-300</td><td>3</td><td>79.00</td><td>237.00</td></tr>
+            <tr><td>2</td><td>SKU-201</td><td>3</td><td>45.00</td><td>135.00</td></tr></table>
+    </div>
+
+    <div class="card" id="defects" style="left:0; top:745px; width:400px; height:130px; font-size:13px">
+        <h3>Defects bronze deliberately keeps (per day)</h3>
+        <code>-0006</code> status <code>"COMPLETED"</code> · <code>-0013</code> customer <code>null</code><br>
+        <code>-0021</code> a line with <code>qty 0</code> · <code>-0041</code> delivered twice<br>
+        → 301 bronze rows per day, 299 in silver.orders. Now: <b>602 → 598</b> across two days.
+    </div>
+</div>
+
+<script>
+    link('json', 'sql', { color: 'var(--landing)', fa: 0.35, straight: true, label: 'read_json', lp: 0.5 });
+    link('sql', 'brow', { color: 'var(--bronze)', fa: 0.35, straight: true, label: 'Arrow → Delta', lp: 0.5 });
+    link('sql', 'write', { color: 'var(--py)', from: 'bottom', to: 'top', fa: 0.5 });
+    link('write', 'sord', { color: 'var(--silver)', from: 'bottom', to: 'top' });
+    link('brow', 'sitem', { color: 'var(--silver)', from: 'bottom', to: 'top', fa: 0.5, fb: 0.5 });
+</script>
+</body>
+</html>

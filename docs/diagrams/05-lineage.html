@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x910">
+<title>05 · Table lineage</title>
+<link rel="stylesheet" href="diagram.css">
+<script src="diagram.js"></script>
+<style>
+    .stage { height: 530px; }
+    .stage .card { height: 84px; padding: 8px 11px; font-size: 12px; }
+    .stage .card b { display: block; font: 700 13.5px "Cascadia Code", Consolas, monospace; margin-bottom: 2px; }
+    .stage .card .cols { font-family: "Cascadia Code", Consolas, monospace; color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .colhd { position: absolute; top: 0; font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<h1>Table lineage — landing files to Redshift</h1>
+<p class="sub">Every arrow is a <code>FROM</code> / <code>JOIN</code> in a SQL file (or the Redshift loader). Upstream tables are referenced by three-part UC name, e.g. <code>lakehouse.silver.orders</code>.
+Edge colour follows the source table. Key columns are shown under each name.</p>
+
+<div class="stage">
+    <div class="colhd" style="left:0; color: var(--landing)">Landing volume</div>
+    <div class="colhd" style="left:280px; color: var(--bronze)">lakehouse.bronze</div>
+    <div class="colhd" style="left:620px; color: var(--silver)">lakehouse.silver</div>
+    <div class="colhd" style="left:950px; color: var(--gold)">lakehouse.gold</div>
+    <div class="colhd" style="left:1292px; color: var(--rs)">Redshift dev.analytics</div>
+
+    <div class="card b-landing" id="f-cust" style="left:0; top:40px; width:200px"><b>customers_*.csv</b><div class="cols">customer_id, names, email, country, signup_date, updated_at</div></div>
+    <div class="card b-landing" id="f-ord" style="left:0; top:205px; width:200px"><b>orders_*.jsonl</b><div class="cols">order_id, customer_id, order_ts, status, channel, items[{sku,qty,unit_price}]</div></div>
+    <div class="card b-landing" id="f-prod" style="left:0; top:370px; width:200px"><b>products_*.csv</b><div class="cols">sku, product_name, category, list_price</div></div>
+
+    <div class="card b-bronze" id="b-cust" style="left:280px; top:40px; width:200px"><b>customers</b><div class="cols">all source cols (VARCHAR)<br>+ _source_file, _ingested_at</div></div>
+    <div class="card b-bronze" id="b-ord" style="left:280px; top:205px; width:200px"><b>orders</b><div class="cols">VARCHAR cols, items STRUCT[]<br>+ _source_file, _ingested_at</div></div>
+    <div class="card b-bronze" id="b-prod" style="left:280px; top:370px; width:200px"><b>products</b><div class="cols">all source cols (VARCHAR)<br>+ _source_file, _ingested_at</div></div>
+
+    <div class="card b-silver" id="s-cust" style="left:620px; top:40px; width:225px"><b>customers</b><div class="cols">PK customer_id · email lower, country upper, signup_date DATE</div></div>
+    <div class="card b-silver" id="s-ord" style="left:620px; top:150px; width:225px"><b>orders</b><div class="cols">PK order_id · order_ts TSTZ, order_date, status, channel</div></div>
+    <div class="card b-silver" id="s-item" style="left:620px; top:260px; width:225px"><b>order_items</b><div class="cols">PK (order_id, line_number) · sku, quantity, unit_price, line_amount</div></div>
+    <div class="card b-silver" id="s-prod" style="left:620px; top:370px; width:225px"><b>products</b><div class="cols">PK sku · product_name, category, list_price DECIMAL</div></div>
+
+    <div class="card b-gold" id="g-clv" style="left:950px; top:95px; width:250px"><b>customer_lifetime_value</b><div class="cols">grain: customer · completed_orders, lifetime_revenue, first/last order</div></div>
+    <div class="card b-gold" id="g-daily" style="left:950px; top:205px; width:250px"><b>daily_sales</b><div class="cols">grain: order_date × channel · orders, units, revenue</div></div>
+    <div class="card b-gold" id="g-pp" style="left:950px; top:315px; width:250px"><b>product_performance</b><div class="cols">grain: sku · units_sold, revenue, units_returned, return_rate</div></div>
+
+    <div class="card b-rs" id="r-clv" style="left:1292px; top:95px; width:220px"><b>customer_lifetime_value</b><div class="cols">loaded via stg_ + swap</div></div>
+    <div class="card b-rs" id="r-daily" style="left:1292px; top:205px; width:220px"><b>daily_sales</b><div class="cols">loaded via stg_ + swap</div></div>
+    <div class="card b-rs" id="r-pp" style="left:1292px; top:315px; width:220px"><b>product_performance</b><div class="cols">loaded via stg_ + swap</div></div>
+    <div class="card b-rs" id="r-audit" style="left:1292px; top:440px; width:220px; border-style: dashed; border-left-style: solid"><b>load_audit</b><div class="cols">table_name, source_uri, delta_version, row_count, loaded_at</div></div>
+</div>
+
+<div class="grid4" style="margin-top: 20px">
+    <div class="card b-bronze"><h3>landing → bronze</h3>One file glob per table (<code>${LANDING}/orders/*.jsonl</code>), so every landed date is re-read on each run. No filtering — bronze is the audit copy.</div>
+    <div class="card b-silver"><h3>bronze → silver</h3><code>bronze.orders</code> fans out into a header table (<code>orders</code>) and a line table (<code>order_items</code>, via <code>unnest(items)</code>). Both apply the same de-dup and orphan filter so they stay consistent.</div>
+    <div class="card b-gold"><h3>silver → gold</h3>All three gold tables join <code>orders</code> ⋈ <code>order_items</code> on <code>order_id</code>. Revenue = completed orders only; <code>product_performance</code> also counts returns and ignores cancelled orders.</div>
+    <div class="card b-rs"><h3>gold → Redshift</h3>The loader lists <code>lakehouse.gold</code> from UC, so a new <code>sql/gold/x.sql</code> automatically becomes <code>analytics.x</code>. Each load appends one audit row with the Delta version it read.</div>
+</div>
+
+<script>
+    const C = '#0e7490', O = '#475569', I = '#7c3aed', P = '#15803d', Bz = 'var(--bronze)', Rs = 'var(--rs)', Gd = 'var(--gold)';
+    link('f-cust', 'b-cust', { color: Bz, straight: true });
+    link('f-ord', 'b-ord', { color: Bz, straight: true });
+    link('f-prod', 'b-prod', { color: Bz, straight: true });
+
+    link('b-cust', 's-cust', { color: C, straight: true, label: 'latest wins', lp: 0.5 });
+    link('b-ord', 's-ord', { color: O, fa: 0.3, fb: 0.6, mid: 550 });
+    link('b-ord', 's-item', { color: I, fa: 0.7, fb: 0.4, mid: 550 });
+    link('b-prod', 's-prod', { color: P, straight: true, label: 'one per sku', lp: 0.5 });
+
+    link('s-cust', 'g-clv', { color: C, fb: 0.25, mid: 870 });
+    link('s-ord', 'g-clv', { color: O, fa: 0.3, fb: 0.5, mid: 895 });
+    link('s-ord', 'g-daily', { color: O, fa: 0.55, fb: 0.35, mid: 895 });
+    link('s-ord', 'g-pp', { color: O, fa: 0.8, fb: 0.25, mid: 895 });
+    link('s-item', 'g-clv', { color: I, fa: 0.25, fb: 0.75, mid: 920 });
+    link('s-item', 'g-daily', { color: I, fa: 0.5, fb: 0.65, mid: 920 });
+    link('s-item', 'g-pp', { color: I, fa: 0.75, fb: 0.5, mid: 920 });
+    link('s-prod', 'g-pp', { color: P, fb: 0.75, mid: 870 });
+
+    link('g-clv', 'r-clv', { color: Rs, straight: true });
+    link('g-daily', 'r-daily', { color: Rs, straight: true });
+    link('g-pp', 'r-pp', { color: Rs, straight: true });
+    link('g-pp', 'r-audit', { color: Rs, from: 'bottom', to: 'left', fa: 0.5, dashed: true, label: 'version, row count', lp: 0.6 });
+</script>
+</body>
+</html>

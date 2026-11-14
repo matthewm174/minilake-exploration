@@ -1,0 +1,83 @@
+/* Shared look for the component diagrams. Each page is rendered to docs/img/<name>.png by render.ps1. */
+:root {
+    --ink: #0f172a;
+    --muted: #475569;
+    --line: #94a3b8;
+    --paper: #ffffff;
+    --bg: #f1f5f9;
+    --landing: #64748b;  --landing-bg: #f1f5f9;
+    --bronze: #b45309;   --bronze-bg: #fdecd8;
+    --silver: #475569;   --silver-bg: #e2e8f0;
+    --gold: #a16207;     --gold-bg: #fef3c7;
+    --rs: #b91c1c;       --rs-bg: #fee2e2;
+    --uc: #1d4ed8;       --uc-bg: #dbeafe;
+    --py: #6d28d9;       --py-bg: #ede9fe;
+    --ok: #15803d;       --ok-bg: #dcfce7;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+    width: 1600px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+    padding: 36px 44px 40px;
+}
+h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: -0.01em; }
+.sub { margin: 0 0 24px; color: var(--muted); font-size: 16px; max-width: 1400px; }
+.num { display: inline-block; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff;
+       text-align: center; line-height: 28px; font-size: 14px; font-weight: 700; margin-right: 10px; vertical-align: 3px; }
+code, .mono { font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; }
+code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; }
+.card { background: var(--paper); border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px 18px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 4px 0; }
+.card ul { margin: 6px 0 0; padding-left: 18px; }
+.card li { margin: 2px 0; }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+       padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; }
+.t-landing { background: #e2e8f0; color: var(--landing); }
+.t-bronze  { background: var(--bronze-bg);  color: var(--bronze); }
+.t-silver  { background: var(--silver-bg);  color: var(--silver); }
+.t-gold    { background: var(--gold-bg);    color: var(--gold); }
+.t-rs      { background: var(--rs-bg);      color: var(--rs); }
+.t-uc      { background: var(--uc-bg);      color: var(--uc); }
+.t-py      { background: var(--py-bg);      color: var(--py); }
+.t-ok      { background: var(--ok-bg);      color: var(--ok); }
+.b-landing { border-left: 6px solid var(--landing); }
+.b-bronze  { border-left: 6px solid var(--bronze); }
+.b-silver  { border-left: 6px solid var(--silver); }
+.b-gold    { border-left: 6px solid var(--gold); }
+.b-rs      { border-left: 6px solid var(--rs); }
+.b-uc      { border-left: 6px solid var(--uc); }
+.b-py      { border-left: 6px solid var(--py); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.legend { display: flex; gap: 18px; color: var(--muted); font-size: 13px; margin-top: 18px; flex-wrap: wrap; }
+.legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+                       margin-right: 6px; vertical-align: -1px; background: var(--c); }
+.footer { margin-top: 18px; color: var(--muted); font-size: 13px; }
+/* Arrows for grid layouts: .arr points right, .varr points down. Set --c to recolour. */
+.arr { position: relative; align-self: center; height: 3px; background: var(--c, var(--line)); margin: 0 12px 0 4px; }
+.arr::after { content: ""; position: absolute; right: -10px; top: -6px; border-left: 12px solid var(--c, var(--line));
+              border-top: 7.5px solid transparent; border-bottom: 7.5px solid transparent; }
+.arr.dashed { background: repeating-linear-gradient(90deg, var(--c, var(--line)) 0 8px, transparent 8px 13px); }
+.varr { position: relative; justify-self: center; width: 3px; height: 100%; min-height: 28px; background: var(--c, var(--line)); margin-bottom: 10px; }
+.varr::after { content: ""; position: absolute; bottom: -10px; left: -6px; border-top: 12px solid var(--c, var(--line));
+               border-left: 7.5px solid transparent; border-right: 7.5px solid transparent; }
+.varr.dashed { background: repeating-linear-gradient(180deg, var(--c, var(--line)) 0 8px, transparent 8px 13px); }
+.lane-label { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+/* Absolute-positioned diagrams; arrows are drawn by diagram.js into svg.links behind the boxes. */
+.stage { position: relative; }
+.stage > svg.links { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; overflow: visible; }
+.stage > .card, .stage > .zone, .stage > .pos { position: absolute; z-index: 1; }
+.zone { border: 2px dashed var(--zc, var(--line)); border-radius: 16px; background: var(--zb, transparent); }
+.zone > .zt { position: absolute; top: -12px; left: 16px; background: var(--bg); padding: 0 8px; font-size: 12px; font-weight: 800;
+              letter-spacing: .1em; text-transform: uppercase; color: var(--zc, var(--muted)); }
+.card.sm { padding: 10px 12px; font-size: 13px; }
+.card.sm h3 { font-size: 14.5px; margin-bottom: 2px; }
+svg { display: block; }
+svg text { font-family: "Segoe UI", system-ui, sans-serif; fill: var(--ink); }
+svg .mono { font-family: "Cascadia Code", Consolas, monospace; }
+svg .muted { fill: var(--muted); }

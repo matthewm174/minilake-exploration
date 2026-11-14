@@ -1,0 +1,23 @@
+# Local Redshift stand-in. Redshift speaks the PostgreSQL wire protocol, so a
+# Postgres container on Redshift's default port (5439) with Redshift's default
+# database/user names is close enough for load + query development.
+services:
+  redshift:
+    image: postgres:16
+    container_name: minilake-redshift
+    environment:
+      POSTGRES_DB: dev
+      POSTGRES_USER: awsuser
+      POSTGRES_PASSWORD: ${REDSHIFT_PASSWORD:-localdev}
+    ports:
+      - "5439:5432"
+    volumes:
+      - redshift-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U awsuser -d dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  redshift-data:

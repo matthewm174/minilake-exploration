@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1045">
+<title>03 · Unity Catalog layout</title>
+<link rel="stylesheet" href="diagram.css">
+<script src="diagram.js"></script>
+<style>
+    .stage { height: 540px; }
+    .schema { width: 351px; top: 160px; padding: 12px 14px 8px; }
+    .schema h3 { font-size: 17px; }
+    .schema .desc { color: var(--muted); font-size: 13px; margin-bottom: 8px; min-height: 38px; }
+    .obj { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; background: #fbfcfe; }
+    .obj .row { display: flex; justify-content: space-between; align-items: baseline; }
+    .obj b { font-family: "Cascadia Code", Consolas, monospace; font-size: 14px; }
+    .obj .n { font-size: 12px; font-weight: 700; color: var(--muted); }
+    .obj .u { font-family: "Cascadia Code", Consolas, monospace; font-size: 11.5px; color: var(--muted); }
+    .obj .w { font-size: 12.5px; }
+    pre { margin: 6px 0 0; font: 12.5px/1.45 "Cascadia Code", Consolas, monospace; background: #0f172a; color: #e2e8f0;
+          padding: 12px 14px; border-radius: 8px; }
+    pre .k { color: #93c5fd; } pre .s { color: #fde68a; } pre .c { color: #94a3b8; }
+</style>
+</head>
+<body>
+<h1>Unity Catalog layout — <code style="font-size:26px">lakehouse</code></h1>
+<p class="sub">Everything the pipeline creates is registered in minilake's Unity Catalog, so it can be found and queried by three-part name.
+<code>setup</code> creates the catalog, the four schemas, the landing volume and the warehouse; each layer step registers one EXTERNAL Delta table per SQL file.
+Row counts below are from the current state (two landed business days).</p>
+
+<div class="stage">
+    <div class="card b-uc" id="cat" style="left:406px; top:0; width:700px; background: var(--uc-bg)">
+        <span class="tag t-uc">catalog</span><h3 class="mono" style="font-size:18px">lakehouse</h3>
+        "Medallion lakehouse emulating s3://acme-lakehouse" · warehouse <code>lakehouse-wh</code>
+    </div>
+
+    <div class="card schema b-landing" id="s-landing" style="left:0">
+        <span class="tag t-landing">schema</span><h3 class="mono">landing</h3>
+        <div class="desc">Raw drop zone. Holds a <b>volume</b>, not tables.</div>
+        <div class="obj"><div class="row"><b>raw</b><span class="n">VOLUME · 6 files</span></div>
+            <div class="u">/Volumes/lakehouse/landing/raw</div><div class="u">≙ s3://acme-landing/raw</div>
+            <div class="w" style="margin-top:6px"><code>customers/customers_&lt;date&gt;.csv</code><br><code>products/products_&lt;date&gt;.csv</code><br><code>orders/orders_&lt;date&gt;.jsonl</code></div></div>
+        <div class="w" style="color:var(--muted)">One file of each kind per <code>land --date</code> run. Files accumulate; bronze re-reads all of them.</div>
+    </div>
+
+    <div class="card schema b-bronze" id="s-bronze" style="left:387px">
+        <span class="tag t-bronze">schema</span><h3 class="mono">bronze</h3>
+        <div class="desc">Raw copies of landed files plus <code>_source_file</code>, <code>_ingested_at</code>.</div>
+        <div class="obj"><div class="row"><b>customers</b><span class="n">102 rows</span></div><div class="u">s3://acme-lakehouse/bronze/customers</div></div>
+        <div class="obj"><div class="row"><b>orders</b><span class="n">602 rows</span></div><div class="u">s3://acme-lakehouse/bronze/orders</div></div>
+        <div class="obj"><div class="row"><b>products</b><span class="n">20 rows</span></div><div class="u">s3://acme-lakehouse/bronze/products</div></div>
+    </div>
+
+    <div class="card schema b-silver" id="s-silver" style="left:774px">
+        <span class="tag t-silver">schema</span><h3 class="mono">silver</h3>
+        <div class="desc">Cleaned, typed, de-duplicated entities.</div>
+        <div class="obj"><div class="row"><b>customers</b><span class="n">50 rows</span></div><div class="w" style="color:var(--muted)">latest record per customer_id</div></div>
+        <div class="obj"><div class="row"><b>order_items</b><span class="n">1,474 rows</span></div><div class="w" style="color:var(--muted)">exploded from nested JSON items</div></div>
+        <div class="obj"><div class="row"><b>orders</b><span class="n">598 rows</span></div><div class="w" style="color:var(--muted)">deduped, orphans removed</div></div>
+        <div class="obj"><div class="row"><b>products</b><span class="n">10 rows</span></div><div class="w" style="color:var(--muted)">one row per SKU</div></div>
+    </div>
+
+    <div class="card schema b-gold" id="s-gold" style="left:1161px">
+        <span class="tag t-gold">schema</span><h3 class="mono">gold</h3>
+        <div class="desc">Business aggregates — the contract loaded into Redshift.</div>
+        <div class="obj"><div class="row"><b>customer_lifetime_value</b><span class="n">50</span></div><div class="w" style="color:var(--muted)">one row per customer</div></div>
+        <div class="obj"><div class="row"><b>daily_sales</b><span class="n">93</span></div><div class="w" style="color:var(--muted)">per order_date × channel</div></div>
+        <div class="obj"><div class="row"><b>product_performance</b><span class="n">10</span></div><div class="w" style="color:var(--muted)">per SKU, with return rate</div></div>
+    </div>
+</div>
+
+<div class="grid3" style="grid-template-columns: 1.35fr 1fr 1fr">
+    <div class="card b-uc"><h3>Anatomy of one table registration</h3>
+        <code>_register()</code> → <code>POST /api/2.1/unity-catalog/tables</code>
+<pre>{
+  <span class="k">"name"</span>: <span class="s">"orders"</span>, <span class="k">"catalog_name"</span>: <span class="s">"lakehouse"</span>, <span class="k">"schema_name"</span>: <span class="s">"bronze"</span>,
+  <span class="k">"table_type"</span>: <span class="s">"EXTERNAL"</span>, <span class="k">"data_source_format"</span>: <span class="s">"DELTA"</span>,
+  <span class="k">"storage_location"</span>: <span class="s">"D:/git/minilake/s3/acme-lakehouse/bronze/orders"</span>,
+  <span class="k">"comment"</span>: <span class="s">"Raw order events (JSON lines, nested items …)"</span>,  <span class="c">← line 1 of the .sql</span>
+  <span class="k">"properties"</span>: {
+    <span class="k">"emulated_s3_uri"</span>: <span class="s">"s3://acme-lakehouse/bronze/orders"</span>,
+    <span class="k">"medallion_layer"</span>: <span class="s">"bronze"</span>,
+    <span class="k">"source_sql"</span>: <span class="s">"sql/bronze/orders.sql"</span> }
+}</pre>
+    </div>
+    <div class="card"><h3>Why the local path, not s3://?</h3>
+        minilake rejects <code>s3://</code> storage locations, so <code>storage_location</code> is the local folder and the S3 URI it stands for is kept in the
+        <code>emulated_s3_uri</code> property. The mapping is mechanical: <code>s3://X</code> ⇄ <code>./s3/X</code> (<code>s3_to_local()</code>).
+        <p style="margin-top:10px"><b>No column list is sent.</b> UC reads the schema from the Delta log, so rewriting a table never needs re-registration — unless its
+        location or comment changes, in which case the entry is deleted and re-created.</p></div>
+    <div class="card"><h3>Idempotent by design</h3>
+        <code>ensure_catalog / ensure_schema / ensure_volume</code> only POST after a 404, and the warehouse is looked up by name before creating.
+        <p style="margin-top:10px"><code>setup</code> also scans <code>s3/acme-lakehouse/*/*</code> and re-registers every folder that has a <code>_delta_log</code>,
+        which rebuilds the catalog after a minilake crash.</p>
+        <p style="margin-top:10px"><code>reset</code> deletes the catalog with <code>force=true</code> and removes <code>s3/</code>.</p></div>
+</div>
+
+<script>
+    for (const s of ['s-landing', 's-bronze', 's-silver', 's-gold'])
+        link('cat', s, { from: 'bottom', to: 'top', color: 'var(--uc)', mid: 138, noArrow: false });
+</script>
+</body>
+</html>

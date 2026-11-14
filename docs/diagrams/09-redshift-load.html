@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1260">
+<title>09 · Redshift load</title>
+<link rel="stylesheet" href="diagram.css">
+<style>
+    svg .msg { font-size: 13px; }
+    svg .code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+    svg .ret { stroke-dasharray: 6 5; }
+    svg text.msg, svg text.code { paint-order: stroke; stroke: #f1f5f9; stroke-width: 6px; stroke-linejoin: round; }
+    svg .tx text { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+    pre { margin: 6px 0 0; font: 12px/1.5 "Cascadia Code", Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; white-space: pre; overflow: hidden; }
+    pre .k { color: #93c5fd; } pre .s { color: #fde68a; } pre .c { color: #94a3b8; }
+    table.audit { border-collapse: collapse; width: 100%; font: 12px "Cascadia Code", Consolas, monospace; margin-top: 8px; }
+    table.audit th { text-align: left; font: 700 11.5px "Segoe UI", sans-serif; color: var(--muted); border-bottom: 1px solid #cbd5e1; padding: 4px 6px; }
+    table.audit td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; }
+</style>
+</head>
+<body>
+<h1>Redshift load — <code style="font-size:26px">step_redshift()</code></h1>
+<p class="sub">Every gold table is copied into Postgres (the Redshift stand-in) with the same pattern production uses: load a staging table, then swap it in with one transaction and write an audit row.
+A query against <code>analytics.daily_sales</code> sees either the old table or the new one — never an empty or half-loaded table.</p>
+
+<svg width="1512" height="650" viewBox="0 0 1512 650">
+    <defs>
+        <marker id="a" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#334155"/></marker>
+        <marker id="ar" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#b91c1c"/></marker>
+    </defs>
+
+    <!-- participants -->
+    <g text-anchor="middle">
+        <rect x="20" y="0" width="230" height="58" rx="10" fill="#ede9fe" stroke="#6d28d9"/>
+        <text x="135" y="25" font-weight="700" font-size="15">lake.py · DuckDB</text>
+        <text x="135" y="44" class="muted" font-size="12">delta + postgres extensions</text>
+        <rect x="415" y="0" width="230" height="58" rx="10" fill="#dbeafe" stroke="#1d4ed8"/>
+        <text x="530" y="25" font-weight="700" font-size="15">minilake · Unity Catalog</text>
+        <text x="530" y="44" class="muted" font-size="12">:8000</text>
+        <rect x="790" y="0" width="230" height="58" rx="10" fill="#fef3c7" stroke="#a16207"/>
+        <text x="905" y="25" font-weight="700" font-size="15">gold Delta table</text>
+        <text x="905" y="44" class="muted mono" font-size="11.5">s3/acme-lakehouse/gold/&lt;t&gt;/</text>
+        <rect x="1262" y="0" width="230" height="58" rx="10" fill="#fee2e2" stroke="#b91c1c"/>
+        <text x="1377" y="25" font-weight="700" font-size="15">Postgres · Redshift</text>
+        <text x="1377" y="44" class="muted mono" font-size="11.5">localhost:5439/dev</text>
+    </g>
+    <g stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 5">
+        <line x1="135" y1="58" x2="135" y2="645"/><line x1="530" y1="58" x2="530" y2="645"/>
+        <line x1="905" y1="58" x2="905" y2="645"/><line x1="1377" y1="58" x2="1377" y2="645"/>
+    </g>
+
+    <!-- setup -->
+    <g stroke="#334155" stroke-width="2" fill="none">
+        <line x1="135" y1="100" x2="1375" y2="100" marker-end="url(#a)"/>
+        <line x1="135" y1="150" x2="1375" y2="150" marker-end="url(#a)"/>
+        <line x1="135" y1="200" x2="528" y2="200" marker-end="url(#a)"/>
+        <line x1="530" y1="240" x2="137" y2="240" marker-end="url(#a)" class="ret"/>
+    </g>
+    <text x="150" y="92" class="code">ATTACH 'host=localhost port=5439 dbname=dev user=awsuser …' AS redshift (TYPE postgres)</text>
+    <text x="150" y="142" class="code">CREATE SCHEMA IF NOT EXISTS analytics;  CREATE TABLE IF NOT EXISTS analytics.load_audit (…)</text>
+    <text x="150" y="192" class="code">GET /api/2.1/unity-catalog/tables?schema_name=gold</text>
+    <text x="150" y="232" class="msg">customer_lifetime_value, daily_sales, product_performance — each with storage_location + emulated_s3_uri</text>
+
+    <!-- loop frame -->
+    <rect x="40" y="262" width="1462" height="376" rx="10" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="8 5"/>
+    <rect x="40" y="262" width="300" height="26" rx="6" fill="#6d28d9"/>
+    <text x="52" y="280" fill="#fff" font-weight="700" font-size="13" style="fill:#fff">loop · for each gold table t (sorted by name)</text>
+
+    <g stroke="#334155" stroke-width="2" fill="none">
+        <line x1="135" y1="320" x2="903" y2="320" marker-end="url(#a)"/>
+        <line x1="905" y1="355" x2="137" y2="355" marker-end="url(#a)" class="ret"/>
+        <line x1="135" y1="400" x2="1375" y2="400" marker-end="url(#a)"/>
+        <line x1="905" y1="440" x2="137" y2="440" marker-end="url(#a)" class="ret"/>
+        <line x1="135" y1="485" x2="1375" y2="485" marker-end="url(#a)"/>
+    </g>
+    <text x="150" y="312" class="code">version = DeltaTable(location).version()</text>
+    <text x="150" y="347" class="msg">v (e.g. 1) — the version this load will read and audit</text>
+    <text x="150" y="392" class="code">DROP TABLE IF EXISTS analytics.stg_&lt;t&gt;    ·    CALL pg_clear_cache()</text>
+    <text x="150" y="432" class="msg">delta_scan(location) → rows from the <tspan font-weight="700">current version's files only</tspan></text>
+    <text x="150" y="477" class="code">CREATE TABLE redshift.analytics.stg_&lt;t&gt; AS SELECT * FROM delta_scan(location)  ·  then count(*)</text>
+
+    <!-- transaction -->
+    <rect x="1000" y="500" width="490" height="128" rx="8" fill="#fff5f5" stroke="#b91c1c" stroke-width="1.5"/>
+    <line x1="135" y1="564" x2="998" y2="564" stroke="#b91c1c" stroke-width="2.5" marker-end="url(#ar)"/>
+    <text x="150" y="556" class="msg" style="fill:#b91c1c" font-weight="700">one postgres_execute() call — atomic swap</text>
+    <g class="tx">
+        <text x="1014" y="522">BEGIN;</text>
+        <text x="1030" y="542">DROP TABLE IF EXISTS analytics.&lt;t&gt;;</text>
+        <text x="1030" y="562">ALTER TABLE analytics.stg_&lt;t&gt; RENAME TO &lt;t&gt;;</text>
+        <text x="1030" y="582">INSERT INTO analytics.load_audit (table_name,</text>
+        <text x="1046" y="602">source_uri, delta_version, row_count) VALUES (…);</text>
+        <text x="1014" y="620">COMMIT;</text>
+    </g>
+</svg>
+
+<div class="grid3" style="grid-template-columns: 1.1fr 1fr 1fr; margin-top: 18px">
+    <div class="card b-rs"><h3>Production equivalent (Redshift SQL)</h3>
+<pre><span class="k">CREATE TABLE</span> analytics.stg_daily_sales (<span class="k">LIKE</span> analytics.daily_sales);
+<span class="k">COPY</span> analytics.stg_daily_sales
+  <span class="k">FROM</span> <span class="s">'s3://acme-lakehouse/gold/daily_sales/'</span>  <span class="c">-- or a manifest</span>
+  IAM_ROLE <span class="s">'arn:aws:iam::&lt;acct&gt;:role/redshift-copy'</span>
+  <span class="k">FORMAT AS PARQUET</span>;
+<span class="k">BEGIN</span>;
+  <span class="k">DROP TABLE</span> analytics.daily_sales;
+  <span class="k">ALTER TABLE</span> analytics.stg_daily_sales <span class="k">RENAME TO</span> daily_sales;
+<span class="k">COMMIT</span>;</pre>
+        <div style="font-size:13px; margin-top:6px">Run by Airflow, Step Functions or a Databricks job after gold finishes.</div>
+    </div>
+    <div class="card"><h3><code>analytics.load_audit</code> — one row per table per load</h3>
+        <table class="audit">
+            <tr><th>table_name</th><th>source_uri</th><th>delta_version</th><th>row_count</th></tr>
+            <tr><td>customer_lifetime_value</td><td>s3://…/gold/customer_lifetime_value</td><td>1</td><td>50</td></tr>
+            <tr><td>daily_sales</td><td>s3://…/gold/daily_sales</td><td>1</td><td>93</td></tr>
+            <tr><td>product_performance</td><td>s3://…/gold/product_performance</td><td>1</td><td>10</td></tr>
+        </table>
+        <div style="font-size:12.5px; color: var(--muted); margin-top:8px">Versions and counts match the current gold tables; <code>loaded_at</code> defaults to <code>now()</code>. Query: <code>SELECT * FROM analytics.load_audit ORDER BY loaded_at DESC</code></div>
+    </div>
+    <div class="card"><h3>Local vs. real Redshift</h3>
+        <ul>
+            <li>Same wire protocol, db <code>dev</code>, user <code>awsuser</code>, port 5439 — clients and drivers work unchanged.</li>
+            <li>No <code>DISTKEY</code>, <code>SORTKEY</code>, <code>SUPER</code>, <code>UNLOAD</code>, Spectrum or <code>COPY FROM 's3://'</code>: keep that DDL in deployment code.</li>
+            <li>Cross-check: channel totals from <code>lake.py verify</code> (via minilake) must equal <code>SELECT channel, sum(revenue) FROM analytics.daily_sales GROUP BY 1</code>.</li>
+            <li>New <code>sql/gold/x.sql</code> ⇒ new <code>analytics.x</code>, no loader change.</li>
+        </ul>
+    </div>
+</div>
+</body>
+</html>

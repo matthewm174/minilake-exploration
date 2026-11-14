@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1080">
+<title>07 · Data quality: defects and the rules that fix them</title>
+<link rel="stylesheet" href="diagram.css">
+<style>
+    .dq { display: grid; grid-template-columns: 330px 46px 300px 46px 1fr 46px 260px; align-items: stretch; row-gap: 12px; }
+    .dq .hd { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding-bottom: 2px; }
+    .dq .card { padding: 8px 12px; font-size: 13px; }
+    .dq .card b.id { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+    .dq .rule { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; background: #f8fafc; }
+    .dq .rule .where { color: var(--muted); font: 11.5px "Segoe UI", sans-serif; display: block; margin-bottom: 2px; }
+    .dq .res { background: var(--ok-bg); border-color: #86efac; }
+    .funnel { display: grid; grid-template-columns: 190px 1fr; gap: 8px 14px; align-items: center; font-size: 13px; }
+    .bars { display: flex; gap: 4px; align-items: center; }
+    .bar { height: 26px; border-radius: 6px; color: #fff; font: 700 12px "Segoe UI", sans-serif; display: flex; align-items: center; padding: 0 8px; white-space: nowrap; }
+    .bars .lbl { color: var(--muted); font-size: 12px; margin: 0 6px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>Data quality — defects injected on purpose, and where each is fixed</h1>
+<p class="sub"><code>_sample_files()</code> plants realistic problems in every landed day so each layer does visible work. Bronze keeps all of them (it is the audit copy);
+silver applies one rule per problem. Examples below are real rows from the current tables.</p>
+
+<div class="dq">
+    <div class="hd">Defect in source</div><div></div><div class="hd">Bronze (kept as-is)</div><div></div><div class="hd">Silver rule</div><div></div><div class="hd">Result</div>
+
+    <div class="card b-landing"><b>Messy email</b> — whitespace + upper case<br><span class="mono">customers[3]</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">C0004</b> <span class="mono">'&nbsp;&nbsp;GUS.KIM4@EXAMPLE.COM '</span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/customers.sql</span>lower(trim(email))</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res"><span class="mono">gus.kim4@example.com</span></div>
+
+    <div class="card b-landing"><b>Padded lower-case country</b><br><span class="mono">customers[7]</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">C0008</b> country <span class="mono">' de'</span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/customers.sql</span>upper(trim(country))</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res"><span class="mono">DE</span></div>
+
+    <div class="card b-landing"><b>CDC update</b> — customer moved country, sent again with a newer <span class="mono">updated_at</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">C0011</b> 4 versions over 2 files:<br><span class="mono">BR 09-26 · CA 11-12 · GB 10-12 · <b>CA 11-13</b></span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/customers.sql — latest wins</span>QUALIFY row_number() OVER (PARTITION BY customer_id<br>&nbsp;&nbsp;ORDER BY updated_at DESC, _source_file DESC) = 1</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res">one row: <span class="mono">C0011 CA</span><br>102 bronze → <b>50</b> customers</div>
+
+    <div class="card b-landing"><b>Inconsistent casing</b> in status<br><span class="mono">orders[5]</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">O20261113-0006</b> status <span class="mono">'COMPLETED'</span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/orders.sql</span>lower(trim(status))</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res"><span class="mono">completed</span> — now counted by gold's <span class="mono">status = 'completed'</span></div>
+
+    <div class="card b-landing"><b>Orphan order</b> — no customer<br><span class="mono">orders[12]</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">O20261113-0013</b> customer_id <span class="mono">NULL</span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/orders.sql <i>and</i> silver/order_items.sql</span>WHERE customer_id IS NOT NULL</div><div class="arr" style="--c: var(--rs)"></div>
+    <div class="card res" style="background: var(--rs-bg); border-color: #fca5a5">header <i>and</i> its 4 lines dropped</div>
+
+    <div class="card b-landing"><b>Invalid line</b> — quantity 0<br><span class="mono">orders[20].items[0]</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">O20261113-0021</b> qty <span class="mono">['0','3','1']</span></div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/order_items.sql</span>WHERE CAST(item.qty AS INTEGER) &gt; 0</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res">order kept with <b>2</b> lines; line numbers stay 2, 3</div>
+
+    <div class="card b-landing"><b>At-least-once delivery</b> — same event twice<br><span class="mono">orders.append(orders[40])</span></div><div class="arr"></div>
+    <div class="card b-bronze"><b class="id">O20261113-0041</b> × 2 identical rows</div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/orders.sql, silver/order_items.sql</span>QUALIFY row_number() OVER (PARTITION BY order_id<br>&nbsp;&nbsp;ORDER BY _source_file DESC) = 1</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res">one copy (lines not doubled)</div>
+
+    <div class="card b-landing"><b>Re-delivered reference data</b> — full product file lands every day</div><div class="arr"></div>
+    <div class="card b-bronze">every SKU once per landed file (20 rows)</div><div class="arr"></div>
+    <div class="card rule b-silver"><span class="where">silver/products.sql</span>QUALIFY row_number() OVER (PARTITION BY sku<br>&nbsp;&nbsp;ORDER BY _source_file DESC) = 1</div><div class="arr" style="--c: var(--ok)"></div>
+    <div class="card res">newest file wins → <b>10</b> products</div>
+</div>
+
+<div class="card" style="margin-top: 24px">
+    <h3>Row-count funnel (current state: 2 landed days)</h3>
+    <div class="funnel" style="margin-top: 10px">
+        <div><b>orders</b></div>
+        <div class="bars">
+            <div class="bar" style="width: 482px; background: var(--bronze)">bronze 602 = 2 × (300 + 1 duplicate)</div><span class="lbl">−2 duplicates −2 orphans →</span>
+            <div class="bar" style="width: 478px; background: var(--silver)">silver 598</div>
+        </div>
+        <div><b>order lines</b> </div>
+        <div class="bars">
+            <div class="bar" style="width: 372px; background: var(--bronze)">1,488 nested items</div><span class="lbl">− dup / orphan / qty 0 →</span>
+            <div class="bar" style="width: 369px; background: var(--silver)">silver.order_items 1,474</div>
+        </div>
+        <div><b>customers</b></div>
+        <div class="bars">
+            <div class="bar" style="width: 204px; background: var(--bronze)">bronze 102</div><span class="lbl">latest per id →</span>
+            <div class="bar" style="width: 100px; background: var(--silver)">silver 50</div>
+        </div>
+        <div><b>products</b></div>
+        <div class="bars">
+            <div class="bar" style="width: 80px; background: var(--bronze)">20</div><span class="lbl">newest file per sku →</span>
+            <div class="bar" style="width: 40px; background: var(--silver)">10</div>
+        </div>
+    </div>
+    <div class="footer">Bar widths are to scale within each row group (orders 0.8 px/row, lines 0.25 px/row, customers 2 px/row, products 4 px/row). Per single day the README numbers apply: 301 → 299 orders, 51 → 50 customers.</div>
+</div>
+</body>
+</html>

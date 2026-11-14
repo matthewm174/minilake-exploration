@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1200">
+<title>04 · Pipeline steps</title>
+<link rel="stylesheet" href="diagram.css">
+<style>
+    .seq { display: grid; grid-template-columns: 190px 1.6fr 1fr 1.1fr 0.9fr; gap: 0 14px; }
+    .seq .hd { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 0 4px 8px; }
+    .step { display: grid; grid-template-rows: auto 1fr; justify-items: center; }
+    .pill { width: 100%; border-radius: 12px; padding: 10px 12px; color: #fff; font: 700 17px "Cascadia Code", Consolas, monospace; text-align: center; }
+    .pill small { display: block; font: 600 11.5px "Segoe UI", sans-serif; opacity: .9; letter-spacing: .03em; }
+    .step .varr { min-height: 22px; margin: 0 0 12px; }
+    .cell { background: var(--paper); border: 1px solid #cbd5e1; border-radius: 10px; padding: 8px 11px; font-size: 13px; margin-bottom: 34px; }
+    .cell.what { font-size: 13.5px; }
+    .cell .mono { font-size: 12px; overflow-wrap: anywhere; } .seq > * { min-width: 0; }
+    .cell.aws { background: #f8fafc; color: var(--muted); font-style: italic; }
+    .last .cell { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<h1>Pipeline steps — <code style="font-size:26px">python pipeline\lake.py &lt;step&gt;</code></h1>
+<p class="sub"><code>all</code> runs every step top to bottom; <code>lake</code> runs all but <code>redshift</code>; any single step can be run on its own. Every step is safe to re-run:
+catalog objects are created only if missing and Delta tables are overwritten as new versions.</p>
+
+<div class="seq">
+    <div class="hd">Step</div><div class="hd">What it does</div><div class="hd">Reads</div><div class="hd">Writes / creates</div><div class="hd">AWS / Databricks equivalent</div>
+
+    <div class="step"><div class="pill" style="background: var(--uc)">setup<small>step_setup()</small></div><div class="varr"></div></div>
+    <div class="cell what">Ensures catalog <code>lakehouse</code>, schemas <code>landing / bronze / silver / gold</code>, volume <code>landing.raw</code> and warehouse <code>lakehouse-wh</code>. Re-registers any Delta tables already under <code>s3/</code>.</div>
+    <div class="cell">UC API (404 = missing)<br><span class="mono">s3/acme-lakehouse/*/*/_delta_log</span></div>
+    <div class="cell">UC objects, warehouse<br><span class="mono">s3/acme-lakehouse/{bronze,silver,gold}/</span></div>
+    <div class="cell aws">Terraform / UC admin</div>
+
+    <div class="step"><div class="pill" style="background: var(--landing)">land<small>--date · --seed</small></div><div class="varr"></div></div>
+    <div class="cell what"><code>_sample_files(day, seed)</code> generates 50 customers (+1 CDC update), 10 products and 300 orders (+1 duplicate) with deliberate defects, then uploads them.</div>
+    <div class="cell">— (generated in memory, deterministic per seed)</div>
+    <div class="cell"><span class="mono">PUT /api/2.0/fs/files/Volumes/lakehouse/landing/raw/…</span><br>3 files per date</div>
+    <div class="cell aws"><code>aws s3 cp</code>, Fivetran, DMS, Kinesis Firehose</div>
+
+    <div class="step"><div class="pill" style="background: var(--bronze)">bronze<small>step_layer('bronze')</small></div><div class="varr"></div></div>
+    <div class="cell what">Runs <code>sql/bronze/*.sql</code>. Every landed file read as-is: CSV as all-VARCHAR, JSON with nested <code>items</code> kept. Adds <code>_source_file</code> and <code>_ingested_at</code>.</div>
+    <div class="cell"><span class="mono">${LANDING}/**</span> — all landed files, every date</div>
+    <div class="cell">Delta <span class="mono">bronze/{customers,orders,products}</span> + UC registration</div>
+    <div class="cell aws">Auto Loader / <code>COPY INTO</code></div>
+
+    <div class="step"><div class="pill" style="background: var(--silver)">silver<small>step_layer('silver')</small></div><div class="varr"></div></div>
+    <div class="cell what">Runs <code>sql/silver/*.sql</code>: trim, cast, lower/upper-case, de-duplicate with <code>QUALIFY row_number()</code>, drop orphans and zero-qty lines, explode nested items.</div>
+    <div class="cell"><span class="mono">lakehouse.bronze.*</span> (mounted Delta views)</div>
+    <div class="cell">Delta <span class="mono">silver/{customers,order_items,orders,products}</span></div>
+    <div class="cell aws">Spark SQL / Delta Live Tables expectations</div>
+
+    <div class="step"><div class="pill" style="background: var(--gold)">gold<small>step_layer('gold')</small></div><div class="varr"></div></div>
+    <div class="cell what">Runs <code>sql/gold/*.sql</code>: completed revenue by day × channel, customer lifetime value, product units / revenue / return rate.</div>
+    <div class="cell"><span class="mono">lakehouse.silver.*</span></div>
+    <div class="cell">Delta <span class="mono">gold/{customer_lifetime_value,daily_sales,product_performance}</span></div>
+    <div class="cell aws">Spark SQL jobs</div>
+
+    <div class="step"><div class="pill" style="background: var(--rs)">redshift<small>step_redshift()</small></div><div class="varr"></div></div>
+    <div class="cell what">For every gold table: load into <code>analytics.stg_&lt;t&gt;</code>, then in one transaction drop the old table, rename staging into place and append to <code>analytics.load_audit</code>.</div>
+    <div class="cell">UC table list (gold) → <span class="mono">delta_scan(location)</span> current version only</div>
+    <div class="cell">Postgres <span class="mono">dev.analytics.*</span>, <span class="mono">analytics.load_audit</span></div>
+    <div class="cell aws"><code>COPY … FORMAT AS PARQUET</code> + staging swap (Airflow / Step Functions)</div>
+
+    <div class="step last"><div class="pill" style="background: var(--ok)">verify<small>step_verify()</small></div></div>
+    <div class="cell what">Prints the UC tree with row counts — each <code>count(*)</code> is executed <b>through minilake's SQL Statement API</b> — and channel totals from gold.</div>
+    <div class="cell">UC API, <span class="mono">POST /api/2.0/sql/statements</span></div>
+    <div class="cell">— (stdout only)</div>
+    <div class="cell aws">Databricks SQL</div>
+</div>
+
+<div class="grid3" style="margin-top: 28px">
+    <div class="card b-rs"><h3><code>reset</code> (not part of <code>all</code>)</h3>
+        <code>DELETE /unity-catalog/catalogs/lakehouse?force=true</code> (drops schemas, tables and the landing volume with its files) and deletes the whole <code>s3/</code> folder.</div>
+    <div class="card b-landing"><h3>Incremental batch</h3>
+        <code>lake.py land --date 2026-11-14 --seed 8</code>, then <code>bronze</code>, <code>silver</code>, <code>gold</code>, <code>redshift</code>.
+        Bronze re-reads <i>both</i> days; silver resolves overlaps (newest <code>_source_file</code> / <code>updated_at</code> wins); each rewrite is a new Delta version.</div>
+    <div class="card b-py"><h3>Output shape</h3>
+        Each step prints <code>[step]</code> then one line per object, e.g.<br>
+        <code>lakehouse.silver.orders  598 rows -&gt; s3://acme-lakehouse/silver/orders</code></div>
+</div>
+</body>
+</html>

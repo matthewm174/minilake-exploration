@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1080">
+<title>01 · Architecture: production vs local emulation</title>
+<link rel="stylesheet" href="diagram.css">
+<style>
+    .flow { display: grid; grid-template-columns: 1fr 44px 1fr 44px 1fr 44px 1fr 44px 1fr 44px 1fr; align-items: stretch; }
+    .flow .card { padding: 12px 14px; font-size: 13.5px; }
+    .flow .card h3 { font-size: 15.5px; }
+    .flow .card .mono { font-size: 12px; color: var(--muted); }
+    .bar { margin-top: 12px; border-radius: 10px; padding: 9px 16px; font-size: 14px; }
+    .bar.uc { background: var(--uc-bg); color: var(--uc); border: 1px dashed var(--uc); }
+    .bar.py { background: var(--py-bg); color: var(--py); border: 1px dashed var(--py); }
+    .uc-span { display: grid; grid-template-columns: 1fr 44px 4fr 176px 1fr; }
+    .between { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0 44px; height: 70px; margin: 8px 0 8px; }
+    .between div { display: flex; justify-content: center; align-items: center; gap: 10px; } .between .varr { height: 52px; margin: 0 0 10px; justify-self: auto; }
+    .between small { color: var(--muted); font-size: 12px; font-style: italic; }
+    .prod .card { background: #fbfdff; }
+</style>
+</head>
+<body>
+<h1>Architecture — what is being emulated, and by what</h1>
+<p class="sub">A common AWS + Databricks medallion platform (top) and the laptop-sized stand-in for each piece in this folder (bottom).
+Data always flows left to right: source extracts → landing bucket → bronze → silver → gold → Redshift. Unity Catalog governs every object from landing to gold.</p>
+
+<div class="lane-label">Production · AWS + Databricks</div>
+<div class="prod">
+<div class="flow">
+    <div class="card b-landing"><span class="tag t-landing">Sources</span><h3>Operational systems</h3>CRM customers, product catalogue, order events</div>
+    <div class="arr"></div>
+    <div class="card b-landing"><span class="tag t-landing">Landing</span><h3>Raw drop zone</h3><div class="mono">s3://acme-landing/raw/</div>Fivetran, DMS, Firehose, <code>aws s3 cp</code></div>
+    <div class="arr" style="--c: var(--bronze)"></div>
+    <div class="card b-bronze"><span class="tag t-bronze">Bronze</span><h3>Raw Delta copies</h3><div class="mono">s3://acme-lakehouse/<wbr>bronze/</div>Auto Loader / <code>COPY INTO</code></div>
+    <div class="arr" style="--c: var(--silver)"></div>
+    <div class="card b-silver"><span class="tag t-silver">Silver</span><h3>Cleaned entities</h3><div class="mono">s3://acme-lakehouse/<wbr>silver/</div>Spark SQL, DLT expectations</div>
+    <div class="arr" style="--c: var(--gold)"></div>
+    <div class="card b-gold"><span class="tag t-gold">Gold</span><h3>Business aggregates</h3><div class="mono">s3://acme-lakehouse/gold/</div>Spark SQL jobs</div>
+    <div class="arr" style="--c: var(--rs)"></div>
+    <div class="card b-rs"><span class="tag t-rs">Warehouse</span><h3>Amazon Redshift</h3><div class="mono">dev.analytics.*</div><code>COPY … FORMAT<br>AS PARQUET</code></div>
+</div>
+<div class="uc-span"><div></div><div></div><div class="bar uc"><b>Unity Catalog</b> — catalog <code>lakehouse</code>, EXTERNAL Delta tables over S3, volumes, grants · <b>SQL warehouse</b></div></div>
+</div>
+
+<div class="between">
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+    <div><div class="varr dashed"></div><small>emulated by</small></div>
+</div>
+
+<div class="lane-label">Local · this folder</div>
+<div class="flow">
+    <div class="card b-landing"><span class="tag t-landing">Sources</span><h3>Sample generator</h3><code>_sample_files()</code> in lake.py — seeded, with deliberate data-quality defects</div>
+    <div class="arr"></div>
+    <div class="card b-landing"><span class="tag t-landing">Landing</span><h3>UC volume</h3><div class="mono">/Volumes/lakehouse/<wbr>landing/raw</div>uploaded via minilake <b>Files API</b>; on disk in <code>data/volumes/</code></div>
+    <div class="arr" style="--c: var(--bronze)"></div>
+    <div class="card b-bronze"><span class="tag t-bronze">Bronze</span><h3>Delta tables</h3><div class="mono">s3/acme-lakehouse/bronze/</div>built from <code>sql/bronze/*.sql</code> by DuckDB + delta-rs</div>
+    <div class="arr" style="--c: var(--silver)"></div>
+    <div class="card b-silver"><span class="tag t-silver">Silver</span><h3>Delta tables</h3><div class="mono">s3/acme-lakehouse/silver/</div>built from <code>sql/silver/*.sql</code></div>
+    <div class="arr" style="--c: var(--gold)"></div>
+    <div class="card b-gold"><span class="tag t-gold">Gold</span><h3>Delta tables</h3><div class="mono">s3/acme-lakehouse/gold/</div>built from <code>sql/gold/*.sql</code></div>
+    <div class="arr" style="--c: var(--rs)"></div>
+    <div class="card b-rs"><span class="tag t-rs">Warehouse</span><h3>PostgreSQL 16</h3><div class="mono">localhost:5439<br>dev / awsuser</div>Docker <i>or</i> pgserver; same wire protocol as Redshift</div>
+</div>
+<div class="uc-span"><div></div><div></div><div class="bar uc"><b>minilake</b> on <code>:8000</code> — Databricks REST emulator on DuckDB: Unity Catalog registry, Files API, SQL warehouse <code>lakehouse-wh</code>, web SQL editor</div></div>
+<div class="bar py"><b>pipeline/lake.py</b> drives every arrow above: <code>setup → land → bronze → silver → gold → redshift → verify</code>. It talks to minilake over REST (httpx), transforms with <b>DuckDB</b>, writes Delta with <b>delta-rs</b>, and loads Postgres through DuckDB's postgres extension.</div>
+
+<div class="grid3" style="margin-top: 22px">
+    <div class="card"><h3>Why Delta on a local folder?</h3>The <code>s3/</code> tree is laid out exactly like the bucket (<code>&lt;bucket&gt;/&lt;layer&gt;/&lt;table&gt;/</code>), so each <code>s3://</code> URI maps 1:1 to a path. Each table is real Delta: Parquet files plus a <code>_delta_log/</code>, readable by any Delta engine.</div>
+    <div class="card"><h3>Why register in minilake?</h3>minilake gives the tables Databricks-shaped identities (<code>lakehouse.gold.daily_sales</code>) and serves them over the same REST and SQL APIs as Databricks, so the SDK, the SQL editor and REST clients work unchanged.</div>
+    <div class="card"><h3>Why Postgres for Redshift?</h3>Redshift speaks the PostgreSQL wire protocol, so clients, drivers and the load pattern (staging table + swap + audit row) behave the same. Redshift-only DDL (<code>DISTKEY</code>, <code>SORTKEY</code>, <code>SUPER</code>, Spectrum) is not available locally.</div>
+</div>
+<div class="legend">
+    <span style="--c: var(--landing)">landing / sources</span><span style="--c: var(--bronze)">bronze</span><span style="--c: var(--silver)">silver</span>
+    <span style="--c: var(--gold)">gold</span><span style="--c: var(--rs)">Redshift</span><span style="--c: var(--uc)">Unity Catalog / minilake</span><span style="--c: var(--py)">pipeline code</span>
+</div>
+</body>
+</html>

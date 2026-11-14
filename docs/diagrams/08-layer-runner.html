@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport-size" content="1600x1110">
+<title>08 · Layer runner and Delta tables</title>
+<link rel="stylesheet" href="diagram.css">
+<script src="diagram.js"></script>
+<style>
+    .stage { height: 860px; }
+    .stage .card { font-size: 13px; padding: 10px 14px; }
+    .stage .card h3 { font-size: 15px; margin-bottom: 4px; }
+    pre { margin: 6px 0 0; font: 11.5px/1.5 "Cascadia Code", Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 8px 10px; border-radius: 8px; white-space: pre; }
+    pre .k { color: #93c5fd; } pre .s { color: #fde68a; } pre .c { color: #94a3b8; } pre .g { color: #86efac; } pre .r { color: #fca5a5; }
+    .loop { border: 2px dashed var(--py); border-radius: 16px; background: #f7f4ff; }
+    .loop .zt { color: var(--py); }
+    .tree { font: 12.5px/1.6 "Cascadia Code", Consolas, monospace; margin: 4px 0 0; }
+    .tree .d { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Inside a layer step — <code style="font-size:26px">step_layer(ml, layer)</code> and the Delta tables it writes</h1>
+<p class="sub">The same function builds bronze, silver and gold. Adding a table means adding one SQL file: <b>the file name is the table name</b>.
+DuckDB does the transform; delta-rs writes the result as a new Delta version; minilake records where it lives.</p>
+
+<div class="stage">
+    <div class="card b-py" id="engine" style="left:0; top:0; width:560px">
+        <span class="tag t-py">1 · _engine(ml)</span><h3>Build a DuckDB session that sees the catalog</h3>
+<pre>con = duckdb.connect();  SET TimeZone = <span class="s">'UTC'</span>;  LOAD delta
+ATTACH <span class="s">':memory:'</span> AS lakehouse
+<span class="k">for</span> schema <span class="k">in</span> bronze, silver, gold:
+    <span class="k">for</span> t <span class="k">in</span> <span class="g">GET /unity-catalog/tables</span>?schema_name=schema:
+        CREATE VIEW lakehouse.&lt;schema&gt;.&lt;t&gt; AS
+            SELECT * FROM delta_scan(<span class="s">'&lt;t.storage_location&gt;'</span>)</pre>
+        <div style="margin-top:6px">So <code>FROM lakehouse.silver.orders</code> in any SQL file resolves to the <b>current</b> Delta version of that folder — the same three-part name Databricks would use.</div>
+    </div>
+
+    <div class="zone loop" id="loop" style="left:0; top:330px; width:560px; padding: 26px 20px 20px 70px; display: grid; gap: 22px">
+        <span class="zt">2 · for path in sorted(sql/&lt;layer&gt;/*.sql)</span>
+        <div class="card sm" id="render"><h3>a · _render(sql)</h3>
+            <code>${LANDING}</code> → <code>data/volumes/lakehouse/landing/raw</code><br><code>${LANDING_URI}</code> → <code>s3://acme-landing/raw</code></div>
+        <div class="card sm" id="exec"><h3>b · con.execute(sql) → Arrow table</h3>
+            The whole file is one <code>SELECT</code>; the result is materialised as a PyArrow table.</div>
+        <div class="card sm" id="write" style="border-left: 6px solid var(--gold)"><h3>c · write_deltalake(location, data, mode="overwrite", schema_mode="overwrite")</h3>
+            <code>location = s3_to_local("s3://acme-lakehouse/&lt;layer&gt;/&lt;stem&gt;")</code></div>
+        <div class="card sm" id="reg" style="border-left: 6px solid var(--uc)"><h3>d · _register(ml, layer, stem)</h3>
+            EXTERNAL DELTA table in UC; comment = first <code>--</code> line; no-op if already registered unchanged.</div>
+        <div class="card sm" id="mount"><h3>e · _mount(con, layer, stem, location)</h3>
+            (Re)creates the view so <b>later files in the same layer</b> can read this table.</div>
+    </div>
+
+    <div class="card b-gold" id="delta" style="left:680px; top:0; width:832px">
+        <span class="tag t-gold">Delta table on disk</span><h3 class="mono">s3/acme-lakehouse/silver/orders/</h3>
+        <div class="tree">
+            <span class="d">├─</span> _delta_log/<br>
+            <span class="d">│  ├─</span> 00000000000000000000.json <span class="d">  v0 · first build  · add part-…e57d5067….parquet (299 rows)</span><br>
+            <span class="d">│  └─</span> 00000000000000000001.json <span class="d">  v1 · after day 2  · remove e57d…, add part-…338f51e2… (598 rows)</span><br>
+            <span class="d">├─</span> part-00000-e57d5067-…-c000.snappy.parquet <span class="d">  7 KB · tombstoned, still on disk</span><br>
+            <span class="d">└─</span> part-00000-338f51e2-…-c000.snappy.parquet <span class="d"> 12 KB · current</span>
+        </div>
+    </div>
+
+    <div class="card" id="log" style="left:680px; top:215px; width:832px">
+        <h3>What a commit looks like — <code>_delta_log/00000000000000000001.json</code> (abridged)</h3>
+<pre>{<span class="k">"commitInfo"</span>: {<span class="k">"operation"</span>: <span class="s">"WRITE"</span>, <span class="k">"operationParameters"</span>: {<span class="k">"mode"</span>: <span class="s">"Overwrite"</span>},
+                <span class="k">"engineInfo"</span>: <span class="s">"delta-rs:py-1.6.6"</span>,
+                <span class="k">"operationMetrics"</span>: {<span class="k">"num_added_files"</span>: 1, <span class="k">"num_removed_files"</span>: 1, <span class="k">"num_added_rows"</span>: 598}}}
+{<span class="r">"remove"</span>: {<span class="k">"path"</span>: <span class="s">"part-00000-e57d5067-…-c000.snappy.parquet"</span>, <span class="k">"size"</span>: 7220, <span class="k">"dataChange"</span>: true}}
+{<span class="g">"add"</span>:    {<span class="k">"path"</span>: <span class="s">"part-00000-338f51e2-…-c000.snappy.parquet"</span>, <span class="k">"size"</span>: 12041,
+            <span class="k">"stats"</span>: <span class="s">"{numRecords: 598, minValues: {order_id: O20261113-0001, …}, …}"</span>}}</pre>
+        <div style="margin-top:6px">A reader replays the log to find the live file set. <code>delta_scan()</code>, minilake and the Redshift loader all do this, so they never see the tombstoned file.</div>
+    </div>
+
+    <div class="grid2 pos" style="left:680px; top:450px; width:832px">
+        <div class="card b-silver"><h3>Why not just write Parquet?</h3>
+            Overwrite is atomic: readers see either v0 or v1, never a half-written folder. Every version is addressable
+            (<code>DeltaTable(loc).version()</code> is what <code>load_audit</code> records), and the schema lives in the log so UC needs no column list.</div>
+        <div class="card b-rs"><h3>Why the Redshift COPY caveat?</h3>
+            The folder holds files from <b>old versions too</b>. A naive <code>COPY … FROM 's3://…/silver/orders/'</code> would load 299 + 598 rows.
+            Production uses a manifest (<code>GENERATE symlink_format_manifest</code>) or Spectrum; locally <code>delta_scan</code> avoids it.</div>
+    </div>
+
+    <div class="card" id="order" style="left:680px; top:625px; width:832px">
+        <h3>Ordering rule</h3>
+        Files in a layer run <b>alphabetically</b>, and each layer only sees tables registered before it starts plus files already run in this layer.
+        A file may read from earlier layers, or from an earlier file in the same layer (e.g. a gold <code>b_*.sql</code> could read <code>lakehouse.gold.a_*</code>).
+    </div>
+</div>
+
+<script>
+    const P = 'var(--py)';
+    link('engine', 'loop', { from: 'bottom', to: 'top', color: P, fa: 0.9, straight: true });
+    link('render', 'exec', { from: 'bottom', to: 'top', color: P });
+    link('exec', 'write', { from: 'bottom', to: 'top', color: P });
+    link('write', 'reg', { from: 'bottom', to: 'top', color: P });
+    link('reg', 'mount', { from: 'bottom', to: 'top', color: P });
+    link('mount', 'render', { from: 'left', to: 'left', color: P, dashed: true, mid: 32, label: 'next\nfile', lp: 0.5 });
+    link('write', 'delta', { color: 'var(--gold)', fa: 0.4, to: 'left', fb: 0.75, mid: 620, label: 'new version', lp: 0.5 });
+</script>
+</body>
+</html>
