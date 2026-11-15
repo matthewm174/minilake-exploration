@@ -52,7 +52,7 @@ a comment taken from the first line of its SQL file. The SQL warehouse is `lakeh
 - Python 3.11+ and `pip install -r requirements.txt` (minilake with its `notebook` extra for
   JupyterLab, deltalake, duckdb, pyarrow, httpx)
 - The `minilake` command on PATH. pip installs it into your user Scripts folder; if PowerShell
-  says it is not recognised, add that folder to PATH. `start-minilake.ps1` finds it either way.
+  says it is not recognised, add that folder to PATH. `start_minilake.py` finds it either way.
 - For Redshift, one of:
   - Docker Desktop (`docker compose`), or
   - `pip install pgserver`, which provides native PostgreSQL binaries without Docker.
@@ -63,11 +63,11 @@ a comment taken from the first line of its SQL file. The SQL warehouse is `lakeh
 cd D:\git\minilake
 
 # 1. Start the Databricks/Unity Catalog emulator (leave this terminal open; stop with Ctrl+C)
-.\start-minilake.ps1
+python start_minilake.py
 
 # 2. In a second terminal, start the Redshift stand-in (pick one)
 docker compose up -d --wait redshift        # Docker
-.\start-redshift-local.ps1                  # no Docker
+python start_redshift_local.py              # no Docker
 
 # 3. Build everything: UC objects -> land files -> bronze -> silver -> gold -> Redshift -> verify
 python pipeline\lake.py all
@@ -176,7 +176,7 @@ development password only.
 ```powershell
 # Docker
 docker exec -it minilake-redshift psql -U awsuser -d dev
-# native (start-redshift-local.ps1 prints the full psql path)
+# native (start_redshift_local.py prints the full psql path)
 ```
 
 ```sql
@@ -212,7 +212,7 @@ the files in the current version.
 
 ## Operating notes and limits
 
-- **Shut minilake down with Ctrl+C.** With `MINILAKE_PERSIST=1`, which `start-minilake.ps1`
+- **Shut minilake down with Ctrl+C.** With `MINILAKE_PERSIST=1`, which `start_minilake.py`
   sets, the UC registry is saved only on graceful shutdown. After a crash or a killed process,
   run `python pipeline\lake.py setup`. It recreates the catalog objects and re-registers every
   Delta table under `s3/`; the data is never lost because it lives in the Delta files.
@@ -232,9 +232,9 @@ the files in the current version.
 
 | Path | Purpose |
 |---|---|
-| [start-minilake.ps1](./start-minilake.ps1) | Starts minilake on :8000 with data in `./data`, persistence on, and the embedded JupyterLab on (`-NoNotebook` to turn it off) |
+| [start_minilake.py](./start_minilake.py) | Starts minilake on :8000 with data in `./data`, persistence on, and the embedded JupyterLab on (`--no-notebook` to turn it off) |
 | [docker-compose.yml](./docker-compose.yml) | Redshift stand-in (Postgres 16 on :5439) |
-| [start-redshift-local.ps1](./start-redshift-local.ps1) | Same stand-in without Docker (`-Stop` to stop); data in `./redshift-data` |
+| [start_redshift_local.py](./start_redshift_local.py) | Same stand-in without Docker (`--stop` to stop); data in `./redshift-data` |
 | [pipeline/lake.py](./pipeline/lake.py) | UC setup, landing, layer runner, Redshift loader, verify, reset |
 | [sql/bronze](./sql/bronze), [sql/silver](./sql/silver), [sql/gold](./sql/gold) | One SELECT per table |
 | [requirements.txt](./requirements.txt) | Python dependencies |

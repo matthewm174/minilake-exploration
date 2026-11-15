@@ -3,7 +3,7 @@
 data/
 # s3/: emulated buckets holding the Delta tables
 s3/
-# redshift-data/: native Postgres cluster from start-redshift-local.ps1
+# redshift-data/: native Postgres cluster from start_redshift_local.py
 redshift-data/
 
 # Python

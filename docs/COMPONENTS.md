@@ -1,11 +1,11 @@
 # Components, explained with diagrams
 
 Each diagram is an HTML page in [diagrams/](./diagrams) and is rendered to a PNG in [img/](./img). To
-re-render after editing a page, run this from the repo root. It needs Chrome or Edge.
+re-render after editing a page, run this from the repo root. It needs Chrome, Chromium or Edge.
 
 ```powershell
-.\docs\diagrams\render.ps1                  # all diagrams
-.\docs\diagrams\render.ps1 06-bronze-orders # one diagram
+python docs/diagrams/render.py                   # all diagrams
+python docs/diagrams/render.py 06-bronze-orders  # one diagram
 ```
 
 Row counts and example records in the diagrams come from the tables as they were when the

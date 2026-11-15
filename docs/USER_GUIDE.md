@@ -27,7 +27,7 @@ For how the data gets there, see [README.md](../README.md) and [COMPONENTS.md](.
 ## Before you start
 
 ```powershell
-.\start-minilake.ps1                 # leave running; stop with Ctrl+C
+python start_minilake.py             # leave running; stop with Ctrl+C
 python pipeline\lake.py all          # first time only: builds the lakehouse
 ```
 
@@ -235,8 +235,8 @@ opens in `data\notebooks`, which starts with two example notebooks from minilake
 - As the footer says, **Spark does not run in the kernel**. Spark code runs in job containers, which
   need Docker; see the quickstart notebook.
 
-Notebooks need the `notebook` extra, which `requirements.txt` installs. `start-minilake.ps1` turns
-them on by default. To start without them, use `.\start-minilake.ps1 -NoNotebook`. In that case,
+Notebooks need the `notebook` extra, which `requirements.txt` installs. `start_minilake.py` turns
+them on by default. To start without them, use `python start_minilake.py --no-notebook`. In that case,
 or if `jupyterlab` is missing, this page shows **"Notebooks are turned off"**.
 
 ---

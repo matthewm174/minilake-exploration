@@ -45,7 +45,7 @@ lake.py reaches minilake over REST for catalog work, but reads and writes data f
     <div class="card sm b-uc" id="files" style="left:420px; top:430px; width:460px"><h3>Files API</h3><span class="api mono">PUT /api/2.0/fs/files/Volumes/…</span> — landing uploads</div>
 
     <div class="card sm b-rs" id="pg" style="left:420px; top:630px; width:460px; height:110px"><h3>PostgreSQL 16 — db <code>dev</code>, user <code>awsuser</code></h3>
-        <code>docker compose up -d --wait redshift</code> (container <code>minilake-redshift</code>)<br>or <code>.\start-redshift-local.ps1</code> (native, via <code>pgserver</code>)</div>
+        <code>docker compose up -d --wait redshift</code> (container <code>minilake-redshift</code>)<br>or <code>python start_redshift_local.py</code> (native, via <code>pgserver</code>)</div>
 
     <div class="pos" style="left:1030px; top:50px; width:440px; color: var(--muted); font-size: 13px">
         <b>./data</b> = <code>MINILAKE_DATA_DIR</code> (minilake's own state)<br><b>./s3</b> = <code>LAKE_S3_ROOT</code> (the emulated buckets, owned by lake.py)</div>
@@ -57,7 +57,7 @@ lake.py reaches minilake over REST for catalog work, but reads and writes data f
 </div>
 
 <div class="grid3" style="margin-top: 26px">
-    <div class="card"><h3>Start order</h3><code>.\start-minilake.ps1</code> (leave open) → start Postgres → <code>python pipeline\lake.py all</code>. lake.py exits with a clear message if either service is unreachable.</div>
+    <div class="card"><h3>Start order</h3><code>python start_minilake.py</code> (leave open) → start Postgres → <code>python pipeline\lake.py all</code>. lake.py exits with a clear message if either service is unreachable.</div>
     <div class="card"><h3>Persistence caveat</h3>Stop minilake with <b>Ctrl+C</b>. After a crash the registry may be stale; <code>lake.py setup</code> re-registers every folder under <code>s3/</code> that has a <code>_delta_log</code>. Data is never lost — it lives in the Delta files.</div>
     <div class="card"><h3>Overrides</h3><code>MINILAKE_HOST</code>, <code>MINILAKE_DATA_DIR</code>, <code>LAKE_S3_ROOT</code>, <code>REDSHIFT_DSN</code>, <code>REDSHIFT_PASSWORD</code> (default <code>localdev</code>, local-only).</div>
 </div>

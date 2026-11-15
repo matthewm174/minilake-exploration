@@ -79,7 +79,7 @@ class Minilake:
         try:
             r = self.http.request(method, path, **kwargs)
         except httpx.ConnectError:
-            sys.exit(f"Cannot reach minilake at {HOST}. Start it with .\\start-minilake.ps1")
+            sys.exit(f"Cannot reach minilake at {HOST}. Start it with: python start_minilake.py")
         if r.status_code >= 400:
             raise RuntimeError(f"{method} {path} -> {r.status_code}: {r.text}")
         return r

@@ -1,4 +1,4 @@
-/* Shared look for the component diagrams. Each page is rendered to docs/img/<name>.png by render.ps1. */
+/* Shared look for the component diagrams. Each page is rendered to docs/img/<name>.png by render.py. */
 :root {
     --ink: #0f172a;
     --muted: #475569;
